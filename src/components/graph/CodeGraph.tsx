@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import * as d3 from "d3";
 
 // Dynamic import to avoid SSR issues with canvas
@@ -45,8 +45,16 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   const lastClickTimeRef = useRef(0);
   const hasZoomedRef = useRef(false);
   const lastMouseMoveRef = useRef(0);
+  const hoverGroupRef = useRef<string | null>(null);
+  const focusedGroupRef = useRef<string | null>(null);
+
+  // Sync only focusedGroup (used for clicks)
+  useEffect(() => {
+    focusedGroupRef.current = focusedGroup;
+  }, [focusedGroup]);
 
   const finalData = useMemo(() => data || { nodes: [], links: [] }, [data]);
+  const nodeCount = finalData.nodes.length;
 
   // Reset zoom flag when data changes (new file loaded)
   useEffect(() => {
@@ -88,45 +96,37 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     return () => window.removeEventListener("resize", updateDimensions);
   }, []);
 
-  // 1. Setup Static Forces & Cluster Force
+  // 1. Setup Simple Forces
   useEffect(() => {
     if (!graphRef.current) return;
     
     const fg = graphRef.current;
+    const nodeCount = finalData.nodes.length;
     
-    // Collision Force: Prevent overlap strictly
-    // Increased buffer significantly to +12 and iterations to 6
-    fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 12).strength(1).iterations(6));
-
-    // Charge Force: Repulsion
-    fg.d3Force('charge').strength(-150).distanceMax(500);
-
-    // Link Force
-    fg.d3Force('link').distance(70);
-
-    // Center Force: Keep graph centered
-    fg.d3Force('center').strength(0.8);
+    // Simple scaling
+    const scaleFactor = Math.max(0.3, 1 - Math.log10(nodeCount / 200) * 0.4);
+    const chargeStrength = -150 * scaleFactor;
+    const linkDistance = 70 * scaleFactor;
+    const collisionBuffer = Math.max(6, 12 * scaleFactor);
     
-    // Custom Cluster Force: Pull nodes of same group together
+    fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + collisionBuffer).strength(1).iterations(4));
+    fg.d3Force('charge').strength(chargeStrength).distanceMax(500);
+    fg.d3Force('link').distance(linkDistance).strength(0.5);
+    fg.d3Force('center').strength(0.5);
+    
+    // Simple clustering
     fg.d3Force('cluster', (alpha: number) => {
       groups.forEach((nodes) => {
           if (nodes.length < 2) return;
-          
-          let cx = 0, cy = 0;
-          let count = 0;
+          let cx = 0, cy = 0, count = 0;
           nodes.forEach(n => {
               if (n.x !== undefined && n.y !== undefined) {
-                  cx += n.x;
-                  cy += n.y;
-                  count++;
+                  cx += n.x; cy += n.y; count++;
               }
           });
           if (count === 0) return;
-          cx /= count;
-          cy /= count;
-
-          const strength = 0.2;
-
+          cx /= count; cy /= count;
+          const strength = 0.15 * scaleFactor;
           nodes.forEach(n => {
               if (n.x !== undefined && n.y !== undefined) {
                   n.vx! += (cx - n.x) * strength * alpha;
@@ -136,106 +136,6 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       });
     });
   }, [groups]);
-
-  // 2. Setup Dynamic Group Repulsion
-  useEffect(() => {
-    if (!graphRef.current) return;
-    
-    const fg = graphRef.current;
-
-    // Custom Group Repulsion: Only repel sibling groups
-    fg.d3Force('groupRepulsion', (alpha: number) => {
-        const groupData: any[] = [];
-        
-        // Calculate group bounding circles
-        groups.forEach((nodes, groupName) => {
-            if (nodes.length === 0) return;
-            let cx = 0, cy = 0;
-            let count = 0;
-            nodes.forEach(n => { 
-                if (n.x !== undefined && n.y !== undefined) {
-                    cx += n.x; 
-                    cy += n.y; 
-                    count++;
-                }
-            });
-            if (count === 0) return;
-            cx /= count;
-            cy /= count;
-            
-            let r = 0;
-            nodes.forEach(n => {
-                if (n.x !== undefined && n.y !== undefined) {
-                    const dx = n.x - cx;
-                    const dy = n.y - cy;
-                    const d = Math.sqrt(dx*dx + dy*dy) + (n.val || 4);
-                    if (d > r) r = d;
-                }
-            });
-            
-            // Determine parent group name
-            const lastSlash = groupName.lastIndexOf('/');
-            const parentGroup = lastSlash === -1 ? '' : groupName.substring(0, lastSlash);
-            const level = groupName.split('/').length;
-            
-            // Use dynamic spacing
-            const padding = spacing + (5 - Math.min(level, 5)) * 5; 
-            
-            groupData.push({ name: groupName, parent: parentGroup, x: cx, y: cy, r: r + padding, nodes });
-        });
-
-        // Apply repulsion only between sibling groups
-        for (let i = 0; i < groupData.length; i++) {
-            for (let j = i + 1; j < groupData.length; j++) {
-                const g1 = groupData[i];
-                const g2 = groupData[j];
-                
-                // Only repel if they share the same parent (siblings)
-                if (g1.parent === g2.parent) {
-                    const dx = g1.x - g2.x;
-                    const dy = g1.y - g2.y;
-                    const dist = Math.sqrt(dx*dx + dy*dy);
-                    // Reduced buffer for text
-                    const minDist = g1.r + g2.r + 5; 
-
-                    if (dist < minDist && dist > 0) {
-                        const overlap = minDist - dist;
-                        // Moderate repulsion
-                        const f = overlap / dist * alpha * 0.8; 
-                        const fx = dx * f;
-                        const fy = dy * f;
-                        
-                        g1.nodes.forEach((n: any) => { n.vx += fx; n.vy += fy; });
-                        g2.nodes.forEach((n: any) => { n.vx -= fx; n.vy -= fy; });
-                    }
-                }
-            }
-        }
-      });
-      
-    // Only reheat if alpha is low, otherwise just let it run
-    fg.d3ReheatSimulation();
-  }, [groups]);
-
-  // Auto-zoom to fit when data changes
-  useEffect(() => {
-    if (graphRef.current && finalData.nodes.length > 0 && !hasZoomedRef.current) {
-        hasZoomedRef.current = true;
-        // Wait a bit for simulation to start spreading nodes
-        const timer1 = setTimeout(() => {
-            if (graphRef.current) graphRef.current.zoomToFit(400, 50);
-        }, 1000);
-        // And again after it settles more
-        const timer2 = setTimeout(() => {
-            if (graphRef.current) graphRef.current.zoomToFit(400, 50);
-        }, 3000);
-        
-        return () => {
-            clearTimeout(timer1);
-            clearTimeout(timer2);
-        };
-    }
-  }, [finalData]);
 
   // Handle node click for highlighting
   const handleNodeClick = (node: any) => {
@@ -407,15 +307,19 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         }
     });
 
-    setHoverGroup(deepestGroup);
+    // Update ref directly instead of state to avoid re-renders
+    hoverGroupRef.current = deepestGroup;
   };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     // Deprecated in favor of handleBackgroundClick logic
   };
 
-  const drawGroupCircles = (ctx: CanvasRenderingContext2D) => {
+  const drawGroupCircles = (ctx: CanvasRenderingContext2D, globalScale: number) => {
     ctx.save();
+    
+    const currentHoverGroup = hoverGroupRef.current;
+    const currentFocusedGroup = focusedGroupRef.current;
     
     // Sort groups by depth (path length) so parents draw first
     const sortedGroups = Array.from(groups.entries()).sort((a, b) => a[0].length - b[0].length);
@@ -453,17 +357,11 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI, false);
       
       // Highlight logic for groups
-      const isHovered = groupName === hoverGroup;
-      const isFocused = groupName === focusedGroup;
+      const isHovered = groupName === currentHoverGroup;
+      const isFocused = groupName === currentFocusedGroup;
+      const isRelatedToFocus = currentFocusedGroup ? (groupName.startsWith(currentFocusedGroup) || currentFocusedGroup.startsWith(groupName)) : true;
       
-      // Dim if a group is focused AND this group is NOT the focused group AND NOT a parent/child of it
-      // Actually, usually we want to dim everything except the focused subtree.
-      // So if focusedGroup is "src/components", "src" (parent) is visible? 
-      // Let's keep parents visible but maybe less prominent.
-      // And children visible.
-      const isRelatedToFocus = focusedGroup ? (groupName.startsWith(focusedGroup) || focusedGroup.startsWith(groupName)) : true;
-      
-      if (focusedGroup && !isRelatedToFocus) {
+      if (currentFocusedGroup && !isRelatedToFocus) {
           // Dimmed
           ctx.fillStyle = 'rgba(255, 255, 255, 0.005)'; 
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
@@ -486,21 +384,50 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       ctx.fill();
       ctx.stroke();
       
-      // Draw group label
-      // Only draw if radius is substantial
-      if (radius > 30) {
-          ctx.font = (isHovered || isFocused) ? 'bold 13px Sans-Serif' : '12px Sans-Serif';
+      // Draw group label - always visible with adaptive sizing
+      // Calculate font size to be constant in screen space
+      const baseFontSize = 14; // Target size in screen pixels
+      const fontSize = baseFontSize / globalScale;
+      const minRadius = 40 / globalScale; // Minimum circle size to show label
+      
+      if (radius > minRadius) {
+          const isHovered = groupName === currentHoverGroup;
+          const isFocused = groupName === currentFocusedGroup;
+          const isRelatedToFocus = currentFocusedGroup ? (groupName.startsWith(currentFocusedGroup) || currentFocusedGroup.startsWith(groupName)) : true;
           
-          if (focusedGroup && !isRelatedToFocus) {
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+          ctx.font = (isHovered || isFocused) ? `bold ${fontSize}px Sans-Serif` : `${fontSize}px Sans-Serif`;
+          
+          if (currentFocusedGroup && !isRelatedToFocus) {
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
           } else {
-              ctx.fillStyle = (isHovered || isFocused) ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.3)';
+              ctx.fillStyle = (isHovered || isFocused) ? 'rgba(255, 255, 255, 1)' : 'rgba(255, 255, 255, 0.7)';
           }
           
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
-          // Draw label at the top of the circle
-          ctx.fillText(groupName.split('/').pop() || groupName, centerX, centerY - radius - 5);
+          
+          // Add text background for better readability
+          const text = groupName.split('/').pop() || groupName;
+          const metrics = ctx.measureText(text);
+          const textHeight = fontSize;
+          const padding = 4 / globalScale;
+          
+          // Draw semi-transparent background
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+          ctx.fillRect(
+            centerX - metrics.width / 2 - padding,
+            centerY - radius - textHeight - padding * 2,
+            metrics.width + padding * 2,
+            textHeight + padding * 2
+          );
+          
+          // Draw text
+          if (currentFocusedGroup && !isRelatedToFocus) {
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+          } else {
+              ctx.fillStyle = (isHovered || isFocused) ? 'rgba(255, 255, 255, 1)' : 'rgba(255, 255, 255, 0.7)';
+          }
+          ctx.fillText(text, centerX, centerY - radius - padding);
       }
     });
     ctx.restore();
@@ -584,12 +511,12 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         linkDirectionalParticleSpeed={0.005}
 
         // Physics
-        d3AlphaDecay={0} // Keep simulation alive (constantly moving)
-        d3VelocityDecay={0.3} // Add some drag so it doesn't explode
-        cooldownTicks={100}
+        d3AlphaDecay={0.02}
+        d3VelocityDecay={0.4}
+        cooldownTicks={200}
         
         // Rendering
-        onRenderFramePre={drawGroupCircles}
+        onRenderFramePre={(ctx, globalScale) => drawGroupCircles(ctx, globalScale)}
         nodeCanvasObject={(node: any, ctx, globalScale) => {
             const label = node.name;
             const fontSize = 12 / globalScale;
