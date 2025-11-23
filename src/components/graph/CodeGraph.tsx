@@ -75,25 +75,25 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     return () => window.removeEventListener("resize", updateDimensions);
   }, []);
 
+  // 1. Setup Static Forces & Cluster Force
   useEffect(() => {
     if (graphRef.current) {
       const fg = graphRef.current;
       
-      // 1. Collision Force: Prevent overlap strictly
-      // Increased buffer to prevent overlap
-      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 8).strength(1).iterations(5));
+      // Collision Force: Prevent overlap strictly
+      // Increased buffer significantly to +12 and iterations to 6
+      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 12).strength(1).iterations(6));
 
-      // 2. Charge Force: Repulsion
+      // Charge Force: Repulsion
       fg.d3Force('charge').strength(-150).distanceMax(500);
 
-      // 3. Link Force
+      // Link Force
       fg.d3Force('link').distance(70);
 
-      // 4. Center Force: Keep graph centered
-      // Increased strength to prevent "running away"
+      // Center Force: Keep graph centered
       fg.d3Force('center').strength(0.8);
       
-      // 5. Custom Cluster Force: Pull nodes of same group together
+      // Custom Cluster Force: Pull nodes of same group together
       fg.d3Force('cluster', (alpha: number) => {
         groups.forEach((nodes) => {
             if (nodes.length < 2) return;
@@ -111,20 +111,25 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             cx /= count;
             cy /= count;
 
-            // Reduced strength to prevent crushing nodes together (overlap issue)
             const strength = 0.2;
 
             nodes.forEach(n => {
                 if (n.x !== undefined && n.y !== undefined) {
-                    // Pull gently towards center of this group
                     n.vx! += (cx - n.x) * strength * alpha;
                     n.vy! += (cy - n.y) * strength * alpha;
                 }
             });
         });
       });
+    }
+  }, [graphRef.current, groups]);
 
-      // 6. Custom Group Repulsion: Only repel sibling groups
+  // 2. Setup Dynamic Group Repulsion (Depends on spacing)
+  useEffect(() => {
+    if (graphRef.current) {
+      const fg = graphRef.current;
+
+      // Custom Group Repulsion: Only repel sibling groups
       fg.d3Force('groupRepulsion', (alpha: number) => {
         const groupData: any[] = [];
         
@@ -194,6 +199,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         }
       });
       
+      // Only reheat if alpha is low, otherwise just let it run
       fg.d3ReheatSimulation();
     }
   }, [graphRef.current, groups, spacing]);
@@ -271,7 +277,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   return (
     <div ref={containerRef} className="w-full h-full bg-slate-950 relative">
       {/* Controls Overlay */}
-      <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm">
+      <div className="absolute bottom-15 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm">
         <div className="flex flex-col gap-2">
             <label className="text-xs text-slate-400 font-medium">Folder Spacing</label>
             <input 
