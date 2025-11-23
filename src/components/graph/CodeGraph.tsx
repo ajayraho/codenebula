@@ -35,6 +35,10 @@ interface GraphData {
 export default function CodeGraph({ data }: { data?: GraphData }) {
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [spacing, setSpacing] = useState(20); // User adjustable spacing
+  const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
+  const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
+  const [hoverNode, setHoverNode] = useState<string | null>(null);
+  const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
 
@@ -218,6 +222,98 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     }
   }, [finalData, graphRef.current]);
 
+  // Handle node click for highlighting
+  const handleNodeClick = (node: any) => {
+    setHighlightNodes((prev) => {
+      const newHighlights = new Set<string>();
+      const newLinks = new Set<string>();
+      
+      // If clicking the same node, clear selection (toggle off)
+      if (prev.has(node.id) && prev.size === 1) {
+        setHighlightLinks(new Set());
+        return new Set();
+      }
+
+      // Add clicked node
+      newHighlights.add(node.id);
+
+      // Add neighbors
+      finalData.links.forEach((link: any) => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+
+        if (sourceId === node.id) {
+          newHighlights.add(targetId);
+          newLinks.add(link.id || `${sourceId}-${targetId}`); // Assuming link has ID or we use composite
+        } else if (targetId === node.id) {
+          newHighlights.add(sourceId);
+          newLinks.add(link.id || `${sourceId}-${targetId}`);
+        }
+      });
+
+      setHighlightLinks(newLinks);
+      return newHighlights;
+    });
+  };
+
+  // Handle background click to clear selection
+  const handleBackgroundClick = () => {
+    setHighlightNodes(new Set());
+    setHighlightLinks(new Set());
+  };
+
+  // Handle mouse move to detect group hover
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!graphRef.current || !containerRef.current) return;
+    
+    // Get mouse position relative to container
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Convert to graph coordinates
+    const coords = graphRef.current.screen2GraphCoords(x, y);
+    if (!coords) return;
+
+    // Find deepest group containing the point
+    let deepestGroup: string | null = null;
+    let maxDepth = -1;
+
+    groups.forEach((nodes, groupName) => {
+        if (nodes.length === 0) return;
+
+        // Calculate bounding circle (same logic as drawGroupCircles)
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        nodes.forEach(n => {
+            if (n.x === undefined || n.y === undefined) return;
+            minX = Math.min(minX, n.x);
+            maxX = Math.max(maxX, n.x);
+            minY = Math.min(minY, n.y);
+            maxY = Math.max(maxY, n.y);
+        });
+
+        if (minX === Infinity) return;
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const level = groupName.split('/').length;
+        const padding = spacing + (5 - Math.min(level, 5)) * 5;
+        const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
+
+        // Check if point is inside circle
+        const dx = coords.x - centerX;
+        const dy = coords.y - centerY;
+        if (dx*dx + dy*dy <= radius*radius) {
+            if (level > maxDepth) {
+                maxDepth = level;
+                deepestGroup = groupName;
+            }
+        }
+    });
+
+    setHoverGroup(deepestGroup);
+  };
+
   const drawGroupCircles = (ctx: CanvasRenderingContext2D) => {
     ctx.save();
     
@@ -255,16 +351,28 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI, false);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)'; // Subtle background
+      
+      // Highlight logic for groups
+      const isHovered = groupName === hoverGroup;
+      
+      if (isHovered) {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'; // Lighter background
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; // Lighter border
+          ctx.lineWidth = 2;
+      } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.03)'; // Subtle background
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.lineWidth = 1;
+      }
+      
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.stroke();
       
       // Draw group label
       // Only draw if radius is substantial
       if (radius > 30) {
-          ctx.font = '12px Sans-Serif';
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.font = isHovered ? 'bold 13px Sans-Serif' : '12px Sans-Serif';
+          ctx.fillStyle = isHovered ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.3)';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
           // Draw label at the top of the circle
@@ -301,6 +409,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         </button>
       </div>
 
+      <div onMouseMove={handleMouseMove} className="w-full h-full">
       <ForceGraph2DNoSSR
         ref={graphRef}
         width={dimensions.width}
@@ -309,10 +418,37 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         nodeLabel="name"
         nodeAutoColorBy="group"
         
+        // Interaction
+        onNodeClick={handleNodeClick}
+        onBackgroundClick={handleBackgroundClick}
+        
         // Edges
-        linkColor={() => "rgba(100, 149, 237, 0.2)"} // Visible edges
-        linkWidth={1.5}
-        linkDirectionalParticles={2}
+        linkColor={(link: any) => {
+            if (highlightNodes.size > 0) {
+                // If highlighting, only show links connected to highlighted nodes
+                // Check if this link is in the highlightLinks set
+                // Note: link.id might not be reliable if d3 mutates it, so we check source/target
+                const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+                const linkId = link.id || `${sourceId}-${targetId}`;
+                
+                if (highlightLinks.has(linkId)) {
+                    return "rgba(100, 149, 237, 0.6)"; // Brighter
+                }
+                return "rgba(100, 149, 237, 0.05)"; // Dimmed
+            }
+            return "rgba(100, 149, 237, 0.2)"; // Default
+        }} 
+        linkWidth={(link: any) => {
+            if (highlightNodes.size > 0) {
+                const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+                const linkId = link.id || `${sourceId}-${targetId}`;
+                return highlightLinks.has(linkId) ? 2.5 : 0.5;
+            }
+            return 1.5;
+        }}
+        linkDirectionalParticles={highlightNodes.size > 0 ? 0 : 2} // Disable particles when highlighting to reduce noise
         linkDirectionalParticleWidth={2}
         linkDirectionalParticleSpeed={0.005}
 
@@ -327,19 +463,36 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             const label = node.name;
             const fontSize = 12 / globalScale;
             const r = node.val || 4;
+            
+            // Check highlight state
+            const isHighlighted = highlightNodes.has(node.id);
+            const isDimmed = highlightNodes.size > 0 && !isHighlighted;
 
             // Draw Circle
             ctx.beginPath();
             ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-            ctx.fillStyle = node.color || 'rgba(255, 255, 255, 0.8)';
+            
+            if (isDimmed) {
+                ctx.fillStyle = 'rgba(100, 100, 100, 0.2)'; // Dimmed color
+            } else {
+                ctx.fillStyle = node.color || 'rgba(255, 255, 255, 0.8)';
+            }
             ctx.fill();
             
             // Draw Label (Outside)
-            if (globalScale > 0.8) { // Only show if zoomed in a bit
+            // Show label if zoomed in OR if highlighted
+            if (globalScale > 0.8 || isHighlighted) { 
                 ctx.font = `${fontSize}px Sans-Serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                
+                if (isDimmed) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                } else {
+                    ctx.fillStyle = isHighlighted ? 'rgba(255, 255, 255, 1)' : 'rgba(255, 255, 255, 0.7)';
+                    if (isHighlighted) ctx.font = `bold ${fontSize}px Sans-Serif`;
+                }
+                
                 // Draw label below the node
                 ctx.fillText(label, node.x, node.y + r + 2);
             }
@@ -351,6 +504,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             ctx.fill();
         }}
       />
+      </div>
     </div>
   );
 }
