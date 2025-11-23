@@ -70,22 +70,22 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     if (graphRef.current) {
       const fg = graphRef.current;
       
-      // 1. Collision Force: Prevent overlap
+      // 1. Collision Force: Prevent overlap strictly
       // Radius = node size + padding
-      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 5) + 10));
+      // Increased iterations for stability
+      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 4).strength(1).iterations(3));
 
       // 2. Charge Force: Repulsion
-      fg.d3Force('charge').strength(-100);
-      fg.d3Force('charge').distanceMax(300);
+      // Strong repulsion to keep everything spread out
+      fg.d3Force('charge').strength(-200).distanceMax(400);
 
       // 3. Link Force: Keep connected nodes reasonably close
-      fg.d3Force('link').distance(50);
+      fg.d3Force('link').distance(60);
 
       // 4. Center Force: Keep graph centered
       fg.d3Force('center').strength(0.05);
       
       // 5. Custom Cluster Force: Pull nodes of same group together
-      // This is key for "organization"
       fg.d3Force('cluster', (alpha: number) => {
         groups.forEach((nodes) => {
             if (nodes.length < 2) return;
@@ -104,11 +104,56 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             // Pull nodes towards centroid
             nodes.forEach(n => {
                 if (n.x && n.y) {
-                    n.vx! += (cx - n.x) * 1 * alpha;
-                    n.vy! += (cy - n.y) * 1 * alpha;
+                    n.vx! += (cx - n.x) * 0.5 * alpha;
+                    n.vy! += (cy - n.y) * 0.5 * alpha;
                 }
             });
         });
+      });
+
+      // 6. Custom Group Repulsion: Prevent directory circles from overlapping
+      fg.d3Force('groupRepulsion', (alpha: number) => {
+        const groupData: any[] = [];
+        
+        // Calculate group bounding circles
+        groups.forEach((nodes, group) => {
+            if (nodes.length === 0) return;
+            let cx = 0, cy = 0;
+            nodes.forEach(n => { cx += n.x || 0; cy += n.y || 0; });
+            cx /= nodes.length;
+            cy /= nodes.length;
+            
+            let r = 0;
+            nodes.forEach(n => {
+                const dx = (n.x || 0) - cx;
+                const dy = (n.y || 0) - cy;
+                const d = Math.sqrt(dx*dx + dy*dy) + (n.val || 4);
+                if (d > r) r = d;
+            });
+            groupData.push({ x: cx, y: cy, r: r + 10, nodes }); // +10 padding
+        });
+
+        // Apply repulsion between groups
+        for (let i = 0; i < groupData.length; i++) {
+            for (let j = i + 1; j < groupData.length; j++) {
+                const g1 = groupData[i];
+                const g2 = groupData[j];
+                const dx = g1.x - g2.x;
+                const dy = g1.y - g2.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const minDist = g1.r + g2.r;
+
+                if (dist < minDist && dist > 0) {
+                    const overlap = minDist - dist;
+                    const f = overlap / dist * alpha * 0.8; // Strong repulsion
+                    const fx = dx * f;
+                    const fy = dy * f;
+                    
+                    g1.nodes.forEach((n: any) => { n.vx += fx; n.vy += fy; });
+                    g2.nodes.forEach((n: any) => { n.vx -= fx; n.vy -= fy; });
+                }
+            }
+        }
       });
       
       // Reheat simulation
@@ -184,56 +229,29 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         nodeCanvasObject={(node: any, ctx, globalScale) => {
             const label = node.name;
             const fontSize = 12 / globalScale;
-            ctx.font = `${fontSize}px Sans-Serif`;
-            const textWidth = ctx.measureText(label).width;
-            const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.5); // Padding
+            const r = node.val || 4;
 
-            // Draw Pill Shape
-            ctx.fillStyle = node.color || 'rgba(255, 255, 255, 0.8)';
-            
-            // Draw rounded rectangle (pill)
-            const x = node.x - bckgDimensions[0] / 2;
-            const y = node.y - bckgDimensions[1] / 2;
-            const w = bckgDimensions[0];
-            const h = bckgDimensions[1];
-            const r = h / 2;
-
+            // Draw Circle
             ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.lineTo(x + w - r, y);
-            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-            ctx.lineTo(x + w, y + h - r);
-            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-            ctx.lineTo(x + r, y + h);
-            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-            ctx.lineTo(x, y + r);
-            ctx.quadraticCurveTo(x, y, x + r, y);
-            ctx.closePath();
+            ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+            ctx.fillStyle = node.color || 'rgba(255, 255, 255, 0.8)';
             ctx.fill();
-
-            // Draw Text
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = '#000'; // Black text on colored node
-            ctx.fillText(label, node.x, node.y);
-
-            node.__bckgDimensions = bckgDimensions; // For pointer area
+            
+            // Draw Label (Outside)
+            if (globalScale > 0.8) { // Only show if zoomed in a bit
+                ctx.font = `${fontSize}px Sans-Serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                // Draw label below the node
+                ctx.fillText(label, node.x, node.y + r + 2);
+            }
         }}
         nodePointerAreaPaint={(node: any, color, ctx) => {
             ctx.fillStyle = color;
-            const bckgDimensions = node.__bckgDimensions;
-            if (bckgDimensions) {
-                ctx.fillRect(
-                    node.x - bckgDimensions[0] / 2, 
-                    node.y - bckgDimensions[1] / 2, 
-                    bckgDimensions[0], 
-                    bckgDimensions[1]
-                );
-            } else {
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, 5, 0, 2 * Math.PI, false);
-                ctx.fill();
-            }
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, (node.val || 4) + 2, 0, 2 * Math.PI, false);
+            ctx.fill();
         }}
       />
     </div>
