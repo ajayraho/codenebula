@@ -34,16 +34,17 @@ interface GraphData {
 
 export default function CodeGraph({ data }: { data?: GraphData }) {
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const [spacing, setSpacing] = useState(20); // User adjustable spacing
   const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
+  const spacing = 20;
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
   const lastClickTimeRef = useRef(0);
   const hasZoomedRef = useRef(false);
+  const lastMouseMoveRef = useRef(0);
 
   const finalData = useMemo(() => data || { nodes: [], links: [] }, [data]);
 
@@ -89,60 +90,61 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
   // 1. Setup Static Forces & Cluster Force
   useEffect(() => {
-    if (graphRef.current) {
-      const fg = graphRef.current;
-      
-      // Collision Force: Prevent overlap strictly
-      // Increased buffer significantly to +12 and iterations to 6
-      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 12).strength(1).iterations(6));
+    if (!graphRef.current) return;
+    
+    const fg = graphRef.current;
+    
+    // Collision Force: Prevent overlap strictly
+    // Increased buffer significantly to +12 and iterations to 6
+    fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 12).strength(1).iterations(6));
 
-      // Charge Force: Repulsion
-      fg.d3Force('charge').strength(-150).distanceMax(500);
+    // Charge Force: Repulsion
+    fg.d3Force('charge').strength(-150).distanceMax(500);
 
-      // Link Force
-      fg.d3Force('link').distance(70);
+    // Link Force
+    fg.d3Force('link').distance(70);
 
-      // Center Force: Keep graph centered
-      fg.d3Force('center').strength(0.8);
-      
-      // Custom Cluster Force: Pull nodes of same group together
-      fg.d3Force('cluster', (alpha: number) => {
-        groups.forEach((nodes) => {
-            if (nodes.length < 2) return;
-            
-            let cx = 0, cy = 0;
-            let count = 0;
-            nodes.forEach(n => {
-                if (n.x !== undefined && n.y !== undefined) {
-                    cx += n.x;
-                    cy += n.y;
-                    count++;
-                }
-            });
-            if (count === 0) return;
-            cx /= count;
-            cy /= count;
+    // Center Force: Keep graph centered
+    fg.d3Force('center').strength(0.8);
+    
+    // Custom Cluster Force: Pull nodes of same group together
+    fg.d3Force('cluster', (alpha: number) => {
+      groups.forEach((nodes) => {
+          if (nodes.length < 2) return;
+          
+          let cx = 0, cy = 0;
+          let count = 0;
+          nodes.forEach(n => {
+              if (n.x !== undefined && n.y !== undefined) {
+                  cx += n.x;
+                  cy += n.y;
+                  count++;
+              }
+          });
+          if (count === 0) return;
+          cx /= count;
+          cy /= count;
 
-            const strength = 0.2;
+          const strength = 0.2;
 
-            nodes.forEach(n => {
-                if (n.x !== undefined && n.y !== undefined) {
-                    n.vx! += (cx - n.x) * strength * alpha;
-                    n.vy! += (cy - n.y) * strength * alpha;
-                }
-            });
-        });
+          nodes.forEach(n => {
+              if (n.x !== undefined && n.y !== undefined) {
+                  n.vx! += (cx - n.x) * strength * alpha;
+                  n.vy! += (cy - n.y) * strength * alpha;
+              }
+          });
       });
-    }
-  }, [graphRef.current, groups]);
+    });
+  }, [groups]);
 
-  // 2. Setup Dynamic Group Repulsion (Depends on spacing)
+  // 2. Setup Dynamic Group Repulsion
   useEffect(() => {
-    if (graphRef.current) {
-      const fg = graphRef.current;
+    if (!graphRef.current) return;
+    
+    const fg = graphRef.current;
 
-      // Custom Group Repulsion: Only repel sibling groups
-      fg.d3Force('groupRepulsion', (alpha: number) => {
+    // Custom Group Repulsion: Only repel sibling groups
+    fg.d3Force('groupRepulsion', (alpha: number) => {
         const groupData: any[] = [];
         
         // Calculate group bounding circles
@@ -176,7 +178,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             const parentGroup = lastSlash === -1 ? '' : groupName.substring(0, lastSlash);
             const level = groupName.split('/').length;
             
-            // Use state-based spacing
+            // Use dynamic spacing
             const padding = spacing + (5 - Math.min(level, 5)) * 5; 
             
             groupData.push({ name: groupName, parent: parentGroup, x: cx, y: cy, r: r + padding, nodes });
@@ -211,25 +213,29 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         }
       });
       
-      // Only reheat if alpha is low, otherwise just let it run
-      fg.d3ReheatSimulation();
-    }
-  }, [graphRef.current, groups, spacing]);
+    // Only reheat if alpha is low, otherwise just let it run
+    fg.d3ReheatSimulation();
+  }, [groups]);
 
   // Auto-zoom to fit when data changes
   useEffect(() => {
     if (graphRef.current && finalData.nodes.length > 0 && !hasZoomedRef.current) {
         hasZoomedRef.current = true;
         // Wait a bit for simulation to start spreading nodes
-        setTimeout(() => {
+        const timer1 = setTimeout(() => {
             if (graphRef.current) graphRef.current.zoomToFit(400, 50);
         }, 1000);
         // And again after it settles more
-        setTimeout(() => {
+        const timer2 = setTimeout(() => {
             if (graphRef.current) graphRef.current.zoomToFit(400, 50);
         }, 3000);
+        
+        return () => {
+            clearTimeout(timer1);
+            clearTimeout(timer2);
+        };
     }
-  }, [finalData, graphRef.current]);
+  }, [finalData]);
 
   // Handle node click for highlighting
   const handleNodeClick = (node: any) => {
@@ -349,6 +355,11 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
   // Handle mouse move to detect group hover
   const handleMouseMove = (e: React.MouseEvent) => {
+    // Throttle to prevent excessive re-renders
+    const now = Date.now();
+    if (now - lastMouseMoveRef.current < 100) return;
+    lastMouseMoveRef.current = now;
+    
     if (!graphRef.current || !containerRef.current) return;
     
     // Get mouse position relative to container
@@ -499,17 +510,6 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     <div ref={containerRef} className="w-full h-full bg-slate-950 relative">
       {/* Controls Overlay */}
       <div className="absolute bottom-15 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm">
-        <div className="flex flex-col gap-2">
-            <label className="text-xs text-slate-400 font-medium">Folder Spacing</label>
-            <input 
-                type="range" 
-                min="0" 
-                max="100" 
-                value={spacing} 
-                onChange={(e) => setSpacing(parseInt(e.target.value))}
-                className="w-32 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-        </div>
         <button 
             onClick={() => {
                 if (graphRef.current) {
@@ -520,6 +520,8 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         >
             Zoom to Fit
         </button>
+        
+       
       </div>
 
       <div onMouseMove={handleMouseMove} className="w-full h-full">
