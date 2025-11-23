@@ -108,12 +108,13 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             cx /= count;
             cy /= count;
 
+            // Reduced strength to allow repulsion to work better
+            const strength = 0.15;
+
             nodes.forEach(n => {
                 if (n.x !== undefined && n.y !== undefined) {
-                    // Pull gently towards center of this group
-                    // This applies to all levels, so a node is pulled to 'src' center AND 'src/components' center
-                    n.vx! += (cx - n.x) * 0.2 * alpha;
-                    n.vy! += (cy - n.y) * 0.2 * alpha;
+                    n.vx! += (cx - n.x) * strength * alpha;
+                    n.vy! += (cy - n.y) * strength * alpha;
                 }
             });
         });
@@ -152,8 +153,13 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             // Determine parent group name
             const lastSlash = groupName.lastIndexOf('/');
             const parentGroup = lastSlash === -1 ? '' : groupName.substring(0, lastSlash);
+            const level = groupName.split('/').length;
             
-            groupData.push({ name: groupName, parent: parentGroup, x: cx, y: cy, r: r + 20, nodes }); // +20 padding
+            // Increased padding to account for labels and ensure visual separation
+            // Deeper levels get less padding in physics to keep them tight
+            const padding = 40 + (5 - Math.min(level, 5)) * 5; 
+            
+            groupData.push({ name: groupName, parent: parentGroup, x: cx, y: cy, r: r + padding, nodes });
         });
 
         // Apply repulsion only between sibling groups
@@ -163,18 +169,17 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
                 const g2 = groupData[j];
                 
                 // Only repel if they share the same parent (siblings)
-                // AND they are not the same (obviously)
-                // AND one is not the parent of the other (already handled by parent check, but good to be safe)
                 if (g1.parent === g2.parent) {
                     const dx = g1.x - g2.x;
                     const dy = g1.y - g2.y;
                     const dist = Math.sqrt(dx*dx + dy*dy);
-                    const minDist = g1.r + g2.r;
+                    // Add extra distance for labels to avoid overlap
+                    const minDist = g1.r + g2.r + 20; 
 
                     if (dist < minDist && dist > 0) {
                         const overlap = minDist - dist;
-                        // Reduced repulsion strength to avoid "way too far" issue
-                        const f = overlap / dist * alpha * 0.5; 
+                        // Stronger repulsion
+                        const f = overlap / dist * alpha * 1.0; 
                         const fx = dx * f;
                         const fy = dy * f;
                         
@@ -216,7 +221,13 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
       const centerX = (minX + maxX) / 2;
       const centerY = (minY + maxY) / 2;
-      const radius = Math.max(maxX - minX, maxY - minY) / 2 + 20; // Match padding in physics
+      
+      // Dynamic padding based on hierarchy level
+      // Parents get MORE padding to ensure they enclose children
+      const level = groupName.split('/').length;
+      const padding = 20 + (5 - Math.min(level, 5)) * 15;
+      
+      const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
 
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI, false);
