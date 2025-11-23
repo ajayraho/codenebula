@@ -39,12 +39,20 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
   const finalData = useMemo(() => data || { nodes: [], links: [] }, [data]);
 
-  // Group nodes by directory (group) for the background circles
+  // Group nodes by directory hierarchy
   const groups = useMemo(() => {
     const g = new Map<string, GraphNode[]>();
+    
     finalData.nodes.forEach((node) => {
-      if (!g.has(node.group)) g.set(node.group, []);
-      g.get(node.group)?.push(node);
+      const pathParts = node.group.split('/');
+      // Create groups for every level of the path
+      // e.g. "src/components" -> add to "src" and "src/components"
+      let currentPath = "";
+      pathParts.forEach((part, i) => {
+        currentPath += (i === 0 ? "" : "/") + part;
+        if (!g.has(currentPath)) g.set(currentPath, []);
+        g.get(currentPath)?.push(node);
+      });
     });
     return g;
   }, [finalData]);
@@ -71,18 +79,15 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       const fg = graphRef.current;
       
       // 1. Collision Force: Prevent overlap strictly
-      // Radius = node size + padding
-      // Increased iterations for stability
       fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 4).strength(1).iterations(3));
 
       // 2. Charge Force: Repulsion
-      // Strong repulsion to keep everything spread out
-      fg.d3Force('charge').strength(-200).distanceMax(400);
+      fg.d3Force('charge').strength(-150).distanceMax(500);
 
-      // 3. Link Force: Keep connected nodes reasonably close
-      fg.d3Force('link').distance(60);
+      // 3. Link Force
+      fg.d3Force('link').distance(70);
 
-      // 4. Center Force: Keep graph centered
+      // 4. Center Force
       fg.d3Force('center').strength(0.05);
       
       // 5. Custom Cluster Force: Pull nodes of same group together
@@ -90,113 +95,145 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         groups.forEach((nodes) => {
             if (nodes.length < 2) return;
             
-            // Calculate centroid of the group
             let cx = 0, cy = 0;
+            let count = 0;
             nodes.forEach(n => {
-                if (n.x && n.y) {
+                if (n.x !== undefined && n.y !== undefined) {
                     cx += n.x;
                     cy += n.y;
+                    count++;
                 }
             });
-            cx /= nodes.length;
-            cy /= nodes.length;
+            if (count === 0) return;
+            cx /= count;
+            cy /= count;
 
-            // Pull nodes towards centroid
             nodes.forEach(n => {
-                if (n.x && n.y) {
-                    n.vx! += (cx - n.x) * 0.5 * alpha;
-                    n.vy! += (cy - n.y) * 0.5 * alpha;
+                if (n.x !== undefined && n.y !== undefined) {
+                    // Pull gently towards center of this group
+                    // This applies to all levels, so a node is pulled to 'src' center AND 'src/components' center
+                    n.vx! += (cx - n.x) * 0.2 * alpha;
+                    n.vy! += (cy - n.y) * 0.2 * alpha;
                 }
             });
         });
       });
 
-      // 6. Custom Group Repulsion: Prevent directory circles from overlapping
+      // 6. Custom Group Repulsion: Only repel sibling groups
       fg.d3Force('groupRepulsion', (alpha: number) => {
         const groupData: any[] = [];
         
         // Calculate group bounding circles
-        groups.forEach((nodes, group) => {
+        groups.forEach((nodes, groupName) => {
             if (nodes.length === 0) return;
             let cx = 0, cy = 0;
-            nodes.forEach(n => { cx += n.x || 0; cy += n.y || 0; });
-            cx /= nodes.length;
-            cy /= nodes.length;
+            let count = 0;
+            nodes.forEach(n => { 
+                if (n.x !== undefined && n.y !== undefined) {
+                    cx += n.x; 
+                    cy += n.y; 
+                    count++;
+                }
+            });
+            if (count === 0) return;
+            cx /= count;
+            cy /= count;
             
             let r = 0;
             nodes.forEach(n => {
-                const dx = (n.x || 0) - cx;
-                const dy = (n.y || 0) - cy;
-                const d = Math.sqrt(dx*dx + dy*dy) + (n.val || 4);
-                if (d > r) r = d;
+                if (n.x !== undefined && n.y !== undefined) {
+                    const dx = n.x - cx;
+                    const dy = n.y - cy;
+                    const d = Math.sqrt(dx*dx + dy*dy) + (n.val || 4);
+                    if (d > r) r = d;
+                }
             });
-            groupData.push({ x: cx, y: cy, r: r + 10, nodes }); // +10 padding
+            
+            // Determine parent group name
+            const lastSlash = groupName.lastIndexOf('/');
+            const parentGroup = lastSlash === -1 ? '' : groupName.substring(0, lastSlash);
+            
+            groupData.push({ name: groupName, parent: parentGroup, x: cx, y: cy, r: r + 20, nodes }); // +20 padding
         });
 
-        // Apply repulsion between groups
+        // Apply repulsion only between sibling groups
         for (let i = 0; i < groupData.length; i++) {
             for (let j = i + 1; j < groupData.length; j++) {
                 const g1 = groupData[i];
                 const g2 = groupData[j];
-                const dx = g1.x - g2.x;
-                const dy = g1.y - g2.y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                const minDist = g1.r + g2.r;
+                
+                // Only repel if they share the same parent (siblings)
+                // AND they are not the same (obviously)
+                // AND one is not the parent of the other (already handled by parent check, but good to be safe)
+                if (g1.parent === g2.parent) {
+                    const dx = g1.x - g2.x;
+                    const dy = g1.y - g2.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    const minDist = g1.r + g2.r;
 
-                if (dist < minDist && dist > 0) {
-                    const overlap = minDist - dist;
-                    const f = overlap / dist * alpha * 0.8; // Strong repulsion
-                    const fx = dx * f;
-                    const fy = dy * f;
-                    
-                    g1.nodes.forEach((n: any) => { n.vx += fx; n.vy += fy; });
-                    g2.nodes.forEach((n: any) => { n.vx -= fx; n.vy -= fy; });
+                    if (dist < minDist && dist > 0) {
+                        const overlap = minDist - dist;
+                        // Reduced repulsion strength to avoid "way too far" issue
+                        const f = overlap / dist * alpha * 0.5; 
+                        const fx = dx * f;
+                        const fy = dy * f;
+                        
+                        g1.nodes.forEach((n: any) => { n.vx += fx; n.vy += fy; });
+                        g2.nodes.forEach((n: any) => { n.vx -= fx; n.vy -= fy; });
+                    }
                 }
             }
         }
       });
       
-      // Reheat simulation
       fg.d3ReheatSimulation();
     }
   }, [graphRef.current, groups]);
 
   const drawGroupCircles = (ctx: CanvasRenderingContext2D) => {
     ctx.save();
-    groups.forEach((nodes, groupName) => {
+    
+    // Sort groups by depth (path length) so parents draw first
+    const sortedGroups = Array.from(groups.entries()).sort((a, b) => a[0].length - b[0].length);
+
+    sortedGroups.forEach(([groupName, nodes]) => {
       if (nodes.length === 0) return;
 
-      // Calculate bounding box/circle
+      // Calculate bounding circle
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let hasValidNode = false;
+      
       nodes.forEach(n => {
         if (n.x === undefined || n.y === undefined) return;
+        hasValidNode = true;
         minX = Math.min(minX, n.x);
         maxX = Math.max(maxX, n.x);
         minY = Math.min(minY, n.y);
         maxY = Math.max(maxY, n.y);
       });
 
-      if (minX === Infinity) return;
+      if (!hasValidNode) return;
 
       const centerX = (minX + maxX) / 2;
       const centerY = (minY + maxY) / 2;
-      const radius = Math.max(maxX - minX, maxY - minY) / 2 + 40; // Add padding
+      const radius = Math.max(maxX - minX, maxY - minY) / 2 + 20; // Match padding in physics
 
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI, false);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.02)'; // Very subtle background
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)'; // Subtle background
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.stroke();
       
       // Draw group label
-      ctx.font = '12px Sans-Serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      // Only draw label if radius is big enough
-      if (radius > 50) {
-          ctx.fillText(groupName.split('/').pop() || groupName, centerX, centerY - radius - 10);
+      // Only draw if radius is substantial
+      if (radius > 30) {
+          ctx.font = '12px Sans-Serif';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          // Draw label at the top of the circle
+          ctx.fillText(groupName.split('/').pop() || groupName, centerX, centerY - radius - 5);
       }
     });
     ctx.restore();
