@@ -39,10 +39,18 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverGroup, setHoverGroup] = useState<string | null>(null);
+  const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
+  const lastClickTimeRef = useRef(0);
+  const hasZoomedRef = useRef(false);
 
   const finalData = useMemo(() => data || { nodes: [], links: [] }, [data]);
+
+  // Reset zoom flag when data changes (new file loaded)
+  useEffect(() => {
+      hasZoomedRef.current = false;
+  }, [data]);
 
   // Group nodes by directory hierarchy
   const groups = useMemo(() => {
@@ -210,14 +218,15 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
   // Auto-zoom to fit when data changes
   useEffect(() => {
-    if (graphRef.current && finalData.nodes.length > 0) {
+    if (graphRef.current && finalData.nodes.length > 0 && !hasZoomedRef.current) {
+        hasZoomedRef.current = true;
         // Wait a bit for simulation to start spreading nodes
         setTimeout(() => {
-            graphRef.current.zoomToFit(400, 50);
+            if (graphRef.current) graphRef.current.zoomToFit(400, 50);
         }, 1000);
         // And again after it settles more
         setTimeout(() => {
-            graphRef.current.zoomToFit(400, 50);
+            if (graphRef.current) graphRef.current.zoomToFit(400, 50);
         }, 3000);
     }
   }, [finalData, graphRef.current]);
@@ -256,10 +265,86 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     });
   };
 
-  // Handle background click to clear selection
-  const handleBackgroundClick = () => {
-    setHighlightNodes(new Set());
-    setHighlightLinks(new Set());
+  // Handle background click to clear selection or detect double click on groups
+  const handleBackgroundClick = (event: MouseEvent) => {
+    const now = Date.now();
+    const isDoubleClick = (now - lastClickTimeRef.current) < 300;
+    lastClickTimeRef.current = now;
+
+    if (isDoubleClick) {
+        // Handle Double Click Logic
+        if (!graphRef.current) return;
+        
+        // Convert to graph coordinates
+        // event is a native MouseEvent, so we need to calculate relative to canvas/container
+        // But react-force-graph might pass the event with different properties?
+        // Usually it passes the event object.
+        // Let's try to use the coordinates from the event if possible, or fallback to clientX/Y
+        
+        // We need to find the container bounds
+        // Since we don't have easy access to the canvas element directly here (it's inside the lib),
+        // we rely on containerRef.
+        if (!containerRef.current) return;
+        
+        const rect = containerRef.current.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const coords = graphRef.current.screen2GraphCoords(x, y);
+        if (!coords) return;
+
+        // Find deepest group containing the point
+        let deepestGroup: string | null = null;
+        let maxDepth = -1;
+
+        groups.forEach((nodes, groupName) => {
+            if (nodes.length === 0) return;
+
+            // Calculate bounding circle
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            nodes.forEach(n => {
+                if (n.x === undefined || n.y === undefined) return;
+                minX = Math.min(minX, n.x);
+                maxX = Math.max(maxX, n.x);
+                minY = Math.min(minY, n.y);
+                maxY = Math.max(maxY, n.y);
+            });
+
+            if (minX === Infinity) return;
+
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const level = groupName.split('/').length;
+            const padding = spacing + (5 - Math.min(level, 5)) * 5;
+            const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
+
+            // Check if point is inside circle
+            const dx = coords.x - centerX;
+            const dy = coords.y - centerY;
+            if (dx*dx + dy*dy <= radius*radius) {
+                if (level > maxDepth) {
+                    maxDepth = level;
+                    deepestGroup = groupName;
+                }
+            }
+        });
+
+        if (deepestGroup) {
+            if (focusedGroup === deepestGroup) {
+                setFocusedGroup(null);
+            } else {
+                setFocusedGroup(deepestGroup);
+            }
+            // Clear node highlights
+            setHighlightNodes(new Set());
+            setHighlightLinks(new Set());
+        }
+    } else {
+        // Single Click
+        setHighlightNodes(new Set());
+        setHighlightLinks(new Set());
+        setFocusedGroup(null);
+    }
   };
 
   // Handle mouse move to detect group hover
@@ -314,6 +399,10 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     setHoverGroup(deepestGroup);
   };
 
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    // Deprecated in favor of handleBackgroundClick logic
+  };
+
   const drawGroupCircles = (ctx: CanvasRenderingContext2D) => {
     ctx.save();
     
@@ -354,8 +443,26 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       
       // Highlight logic for groups
       const isHovered = groupName === hoverGroup;
+      const isFocused = groupName === focusedGroup;
       
-      if (isHovered) {
+      // Dim if a group is focused AND this group is NOT the focused group AND NOT a parent/child of it
+      // Actually, usually we want to dim everything except the focused subtree.
+      // So if focusedGroup is "src/components", "src" (parent) is visible? 
+      // Let's keep parents visible but maybe less prominent.
+      // And children visible.
+      const isRelatedToFocus = focusedGroup ? (groupName.startsWith(focusedGroup) || focusedGroup.startsWith(groupName)) : true;
+      
+      if (focusedGroup && !isRelatedToFocus) {
+          // Dimmed
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.005)'; 
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+          ctx.lineWidth = 1;
+      } else if (isFocused) {
+          // Focused style
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; 
+          ctx.strokeStyle = 'rgba(100, 149, 237, 0.5)'; // Blueish border
+          ctx.lineWidth = 3;
+      } else if (isHovered) {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'; // Lighter background
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; // Lighter border
           ctx.lineWidth = 2;
@@ -371,8 +478,14 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       // Draw group label
       // Only draw if radius is substantial
       if (radius > 30) {
-          ctx.font = isHovered ? 'bold 13px Sans-Serif' : '12px Sans-Serif';
-          ctx.fillStyle = isHovered ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.3)';
+          ctx.font = (isHovered || isFocused) ? 'bold 13px Sans-Serif' : '12px Sans-Serif';
+          
+          if (focusedGroup && !isRelatedToFocus) {
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+          } else {
+              ctx.fillStyle = (isHovered || isFocused) ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.3)';
+          }
+          
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
           // Draw label at the top of the circle
@@ -424,12 +537,28 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         
         // Edges
         linkColor={(link: any) => {
+            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+            
+            // Check focus state
+            if (focusedGroup) {
+                // If focused, only show links where BOTH ends are in the focused group (or sub-groups)
+                // We need to find the node objects to check their groups
+                const sourceNode = finalData.nodes.find(n => n.id === sourceId);
+                const targetNode = finalData.nodes.find(n => n.id === targetId);
+                
+                if (sourceNode && targetNode) {
+                    const sourceInGroup = sourceNode.group.startsWith(focusedGroup);
+                    const targetInGroup = targetNode.group.startsWith(focusedGroup);
+                    
+                    if (!sourceInGroup || !targetInGroup) {
+                        return "rgba(100, 149, 237, 0.02)"; // Very dim
+                    }
+                }
+            }
+
             if (highlightNodes.size > 0) {
                 // If highlighting, only show links connected to highlighted nodes
-                // Check if this link is in the highlightLinks set
-                // Note: link.id might not be reliable if d3 mutates it, so we check source/target
-                const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-                const targetId = typeof link.target === 'object' ? link.target.id : link.target;
                 const linkId = link.id || `${sourceId}-${targetId}`;
                 
                 if (highlightLinks.has(linkId)) {
@@ -466,14 +595,17 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             
             // Check highlight state
             const isHighlighted = highlightNodes.has(node.id);
-            const isDimmed = highlightNodes.size > 0 && !isHighlighted;
+            // Check focus state
+            const isFocused = focusedGroup ? node.group.startsWith(focusedGroup) : true;
+            
+            const isDimmed = (highlightNodes.size > 0 && !isHighlighted) || !isFocused;
 
             // Draw Circle
             ctx.beginPath();
             ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
             
             if (isDimmed) {
-                ctx.fillStyle = 'rgba(100, 100, 100, 0.2)'; // Dimmed color
+                ctx.fillStyle = 'rgba(100, 100, 100, 0.1)'; // Dimmed color
             } else {
                 ctx.fillStyle = node.color || 'rgba(255, 255, 255, 0.8)';
             }
@@ -481,17 +613,14 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             
             // Draw Label (Outside)
             // Show label if zoomed in OR if highlighted
-            if (globalScale > 0.8 || isHighlighted) { 
+            // Hide if dimmed due to focus
+            if ((globalScale > 0.8 || isHighlighted) && !isDimmed) { 
                 ctx.font = `${fontSize}px Sans-Serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
                 
-                if (isDimmed) {
-                    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-                } else {
-                    ctx.fillStyle = isHighlighted ? 'rgba(255, 255, 255, 1)' : 'rgba(255, 255, 255, 0.7)';
-                    if (isHighlighted) ctx.font = `bold ${fontSize}px Sans-Serif`;
-                }
+                ctx.fillStyle = isHighlighted ? 'rgba(255, 255, 255, 1)' : 'rgba(255, 255, 255, 0.7)';
+                if (isHighlighted) ctx.font = `bold ${fontSize}px Sans-Serif`;
                 
                 // Draw label below the node
                 ctx.fillText(label, node.x, node.y + r + 2);
