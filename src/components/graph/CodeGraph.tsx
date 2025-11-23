@@ -34,6 +34,7 @@ interface GraphData {
 
 export default function CodeGraph({ data }: { data?: GraphData }) {
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [spacing, setSpacing] = useState(20); // User adjustable spacing
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
 
@@ -79,7 +80,8 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       const fg = graphRef.current;
       
       // 1. Collision Force: Prevent overlap strictly
-      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 4).strength(1).iterations(3));
+      // Increased buffer to prevent overlap
+      fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + 8).strength(1).iterations(5));
 
       // 2. Charge Force: Repulsion
       fg.d3Force('charge').strength(-150).distanceMax(500);
@@ -87,8 +89,9 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       // 3. Link Force
       fg.d3Force('link').distance(70);
 
-      // 4. Center Force
-      fg.d3Force('center').strength(0.05);
+      // 4. Center Force: Keep graph centered
+      // Increased strength to prevent "running away"
+      fg.d3Force('center').strength(0.8);
       
       // 5. Custom Cluster Force: Pull nodes of same group together
       fg.d3Force('cluster', (alpha: number) => {
@@ -108,11 +111,12 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             cx /= count;
             cy /= count;
 
-            // Reduced strength to allow repulsion to work better
-            const strength = 0.15;
+            // Reduced strength to prevent crushing nodes together (overlap issue)
+            const strength = 0.2;
 
             nodes.forEach(n => {
                 if (n.x !== undefined && n.y !== undefined) {
+                    // Pull gently towards center of this group
                     n.vx! += (cx - n.x) * strength * alpha;
                     n.vy! += (cy - n.y) * strength * alpha;
                 }
@@ -155,9 +159,8 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             const parentGroup = lastSlash === -1 ? '' : groupName.substring(0, lastSlash);
             const level = groupName.split('/').length;
             
-            // Increased padding to account for labels and ensure visual separation
-            // Deeper levels get less padding in physics to keep them tight
-            const padding = 40 + (5 - Math.min(level, 5)) * 5; 
+            // Use state-based spacing
+            const padding = spacing + (5 - Math.min(level, 5)) * 5; 
             
             groupData.push({ name: groupName, parent: parentGroup, x: cx, y: cy, r: r + padding, nodes });
         });
@@ -173,13 +176,13 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
                     const dx = g1.x - g2.x;
                     const dy = g1.y - g2.y;
                     const dist = Math.sqrt(dx*dx + dy*dy);
-                    // Add extra distance for labels to avoid overlap
-                    const minDist = g1.r + g2.r + 20; 
+                    // Reduced buffer for text
+                    const minDist = g1.r + g2.r + 5; 
 
                     if (dist < minDist && dist > 0) {
                         const overlap = minDist - dist;
-                        // Stronger repulsion
-                        const f = overlap / dist * alpha * 1.0; 
+                        // Moderate repulsion
+                        const f = overlap / dist * alpha * 0.8; 
                         const fx = dx * f;
                         const fy = dy * f;
                         
@@ -193,7 +196,21 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       
       fg.d3ReheatSimulation();
     }
-  }, [graphRef.current, groups]);
+  }, [graphRef.current, groups, spacing]);
+
+  // Auto-zoom to fit when data changes
+  useEffect(() => {
+    if (graphRef.current && finalData.nodes.length > 0) {
+        // Wait a bit for simulation to start spreading nodes
+        setTimeout(() => {
+            graphRef.current.zoomToFit(400, 50);
+        }, 1000);
+        // And again after it settles more
+        setTimeout(() => {
+            graphRef.current.zoomToFit(400, 50);
+        }, 3000);
+    }
+  }, [finalData, graphRef.current]);
 
   const drawGroupCircles = (ctx: CanvasRenderingContext2D) => {
     ctx.save();
@@ -225,7 +242,8 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       // Dynamic padding based on hierarchy level
       // Parents get MORE padding to ensure they enclose children
       const level = groupName.split('/').length;
-      const padding = 20 + (5 - Math.min(level, 5)) * 15;
+      // Match the physics padding exactly to ensure visual consistency
+      const padding = spacing + (5 - Math.min(level, 5)) * 5;
       
       const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
 
@@ -251,7 +269,32 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   };
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-slate-950">
+    <div ref={containerRef} className="w-full h-full bg-slate-950 relative">
+      {/* Controls Overlay */}
+      <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm">
+        <div className="flex flex-col gap-2">
+            <label className="text-xs text-slate-400 font-medium">Folder Spacing</label>
+            <input 
+                type="range" 
+                min="0" 
+                max="100" 
+                value={spacing} 
+                onChange={(e) => setSpacing(parseInt(e.target.value))}
+                className="w-32 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+        </div>
+        <button 
+            onClick={() => {
+                if (graphRef.current) {
+                    graphRef.current.zoomToFit(400, 50);
+                }
+            }}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors"
+        >
+            Zoom to Fit
+        </button>
+      </div>
+
       <ForceGraph2DNoSSR
         ref={graphRef}
         width={dimensions.width}
