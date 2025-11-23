@@ -105,14 +105,14 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     
     // Simple scaling
     const scaleFactor = Math.max(0.3, 1 - Math.log10(nodeCount / 200) * 0.4);
-    const chargeStrength = -150 * scaleFactor;
-    const linkDistance = 70 * scaleFactor;
-    const collisionBuffer = Math.max(6, 12 * scaleFactor);
+    const chargeStrength = -250 * scaleFactor; // Stronger repulsion
+    const linkDistance = 100 * scaleFactor; // Longer links
+    const collisionBuffer = Math.max(8, 15 * scaleFactor); // More space between nodes
     
-    fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + collisionBuffer).strength(1).iterations(4));
-    fg.d3Force('charge').strength(chargeStrength).distanceMax(500);
-    fg.d3Force('link').distance(linkDistance).strength(0.5);
-    fg.d3Force('center').strength(0.5);
+    fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + collisionBuffer).strength(1).iterations(5));
+    fg.d3Force('charge').strength(chargeStrength).distanceMax(600);
+    fg.d3Force('link').distance(linkDistance).strength(0.4); // Weaker links allow more spreading
+    fg.d3Force('center').strength(0.3); // Weaker center to allow expansion
     
     // Simple clustering
     fg.d3Force('cluster', (alpha: number) => {
@@ -511,9 +511,9 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         linkDirectionalParticleSpeed={0.005}
 
         // Physics
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.4}
-        cooldownTicks={200}
+        d3AlphaDecay={0.015} // Slower decay for better spreading
+        d3VelocityDecay={0.3} // Less drag
+        cooldownTicks={300} // More time to settle
         
         // Rendering
         onRenderFramePre={(ctx, globalScale) => drawGroupCircles(ctx, globalScale)}
