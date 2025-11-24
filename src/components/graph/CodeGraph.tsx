@@ -60,6 +60,7 @@ export default function CodeGraph({
   const hoverGroupRef = useRef<string | null>(null);
   const focusedGroupRef = useRef<string | null>(null);
   const [isControlsOpen, setIsControlsOpen] = useState(true);
+  const animationFrameRef = useRef<number | null>(null);
   
   // Folder drag state
   const draggedFolderRef = useRef<string | null>(null);
@@ -73,6 +74,44 @@ export default function CodeGraph({
 
   const finalData = useMemo(() => data || { nodes: [], links: [] }, [data]);
   const nodeCount = finalData.nodes.length;
+
+  // Continuous animation loop for smooth movement
+  useEffect(() => {
+    let startTime = Date.now();
+    
+    const animate = () => {
+      if (graphRef.current && finalData.nodes.length > 0) {
+        const elapsed = (Date.now() - startTime) / 1000;
+        
+        // Apply gentle drift to all nodes
+        finalData.nodes.forEach((node: any, i) => {
+          if (node.x !== undefined && node.y !== undefined) {
+            const speed = 0.3;
+            const offset = i * 0.5; // Phase offset per node
+            
+            // Add tiny circular motion
+            node.x += Math.sin(elapsed * speed + offset) * 0.1;
+            node.y += Math.cos(elapsed * speed + offset) * 0.1;
+          }
+        });
+        
+        // Trigger re-render
+        if (graphRef.current.refresh) {
+          graphRef.current.refresh();
+        }
+      }
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+    
+    animationFrameRef.current = requestAnimationFrame(animate);
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [finalData]);
 
   // Reset zoom flag when data changes (new file loaded)
   useEffect(() => {
@@ -158,9 +197,21 @@ export default function CodeGraph({
       });
     });
 
+    // Add gentle wobble for continuous movement
+    fg.d3Force('wobble', (alpha: number) => {
+        const t = Date.now() / 2000; // Slow time
+        finalData.nodes.forEach((n: any, i) => {
+             if (n.vx !== undefined && n.vy !== undefined) {
+                 // Gentle sine wave motion based on node index
+                 n.vx += Math.sin(t + i) * 0.2 * alpha;
+                 n.vy += Math.cos(t + i) * 0.2 * alpha;
+             }
+        });
+    });
+
     // Reheat simulation to apply changes when sliders move
     fg.d3ReheatSimulation();
-  }, [groups, chargeMultiplier, linkMultiplier, clusterMultiplier]);
+  }, [groups, chargeMultiplier, linkMultiplier, clusterMultiplier, finalData]);
 
   // Handle node click for highlighting
   const handleNodeClick = (node: any) => {
@@ -661,8 +712,8 @@ export default function CodeGraph({
 
         // Physics
         d3AlphaDecay={0.001} 
-        d3VelocityDecay={0.08} // Very low friction for floaty movement
-        d3AlphaTarget={0.01} // Keep simulation alive
+        d3VelocityDecay={0.1} // Low friction for floaty movement
+        d3AlphaTarget={0.05} // Keep simulation alive and moving
         cooldownTicks={100} // Initial layout period
         
         // Rendering - Draw group circles BEFORE nodes so nodes are on top
