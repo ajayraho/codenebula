@@ -60,6 +60,7 @@ export default function CodeGraph({
   const hoverGroupRef = useRef<string | null>(null);
   const focusedGroupRef = useRef<string | null>(null);
   const [isControlsOpen, setIsControlsOpen] = useState(true);
+  const [enableAnimation, setEnableAnimation] = useState(true);
   const animationFrameRef = useRef<number | null>(null);
   
   // Folder drag state
@@ -77,6 +78,8 @@ export default function CodeGraph({
 
   // Continuous animation loop for smooth movement
   useEffect(() => {
+    if (!enableAnimation) return;
+    
     let startTime = Date.now();
     
     const animate = () => {
@@ -111,7 +114,7 @@ export default function CodeGraph({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [finalData]);
+  }, [finalData, enableAnimation]);
 
   // Reset zoom flag when data changes (new file loaded)
   useEffect(() => {
@@ -588,20 +591,30 @@ export default function CodeGraph({
   return (
     <div ref={containerRef} className="w-full h-full bg-slate-950 relative">
       {/* Controls Overlay */}
-      <div className={`absolute bottom-15 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm transition-all duration-300 ease-in-out ${isControlsOpen ? 'translate-x-0 opacity-100' : 'translate-x-[120%] opacity-0 pointer-events-none'}`}>
+      <div className={`absolute bottom-15 right-4 z-10 flex flex-col gap-2 bg-slate-900/80 p-3 rounded-lg border border-slate-700 backdrop-blur-sm transition-all duration-300 ease-in-out ${isControlsOpen ? 'translate-x-0 opacity-100' : 'translate-x-[120%] opacity-0 pointer-events-none'}`}>
         <button 
             onClick={() => {
                 if (graphRef.current) {
                     graphRef.current.zoomToFit(400, 50);
                 }
             }}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors"
+            className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors"
         >
             Zoom to Fit
         </button>
         
-        <div className="flex flex-col gap-2">
-          <label className="text-white text-xs font-medium">Spread: {chargeMultiplier.toFixed(1)}x</label>
+        <label className="flex items-center gap-2 text-xs text-slate-300 hover:text-white cursor-pointer">
+          <input 
+            type="checkbox" 
+            checked={enableAnimation}
+            onChange={(e) => setEnableAnimation(e.target.checked)}
+            className="rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
+          />
+          <span>Graph Movement</span>
+        </label>
+        
+        <div className="flex flex-col gap-1">
+          <label className="text-white text-[10px] font-medium">Spread: {chargeMultiplier.toFixed(1)}x</label>
           <input 
             type="range" 
             min="0.5" 
@@ -609,12 +622,12 @@ export default function CodeGraph({
             step="0.1"
             value={chargeMultiplier} 
             onChange={(e) => setChargeMultiplier(Number(e.target.value))}
-            className="w-full"
+            className="w-full h-1"
           />
         </div>
         
-        <div className="flex flex-col gap-2">
-          <label className="text-white text-xs font-medium">Link Distance: {linkMultiplier.toFixed(1)}x</label>
+        <div className="flex flex-col gap-1">
+          <label className="text-white text-[10px] font-medium">Link Distance: {linkMultiplier.toFixed(1)}x</label>
           <input 
             type="range" 
             min="0.5" 
@@ -622,12 +635,12 @@ export default function CodeGraph({
             step="0.1"
             value={linkMultiplier} 
             onChange={(e) => setLinkMultiplier(Number(e.target.value))}
-            className="w-full"
+            className="w-full h-1"
           />
         </div>
         
-        <div className="flex flex-col gap-2">
-          <label className="text-white text-xs font-medium">Folder Grouping: {clusterMultiplier.toFixed(1)}x</label>
+        <div className="flex flex-col gap-1">
+          <label className="text-white text-[10px] font-medium">Folder Grouping: {clusterMultiplier.toFixed(1)}x</label>
           <input 
             type="range" 
             min="0" 
@@ -635,7 +648,7 @@ export default function CodeGraph({
             step="0.1"
             value={clusterMultiplier} 
             onChange={(e) => setClusterMultiplier(Number(e.target.value))}
-            className="w-full"
+            className="w-full h-1"
           />
         </div>
       </div>
@@ -645,7 +658,7 @@ export default function CodeGraph({
         <button 
           onClick={() => setIsControlsOpen(!isControlsOpen)}
           className="p-1 bg-slate-900/80 border-l border-t border-b border-slate-700 rounded-l-md text-slate-400 hover:text-slate-200 backdrop-blur-sm transition-colors"
-          style={{ right: isControlsOpen ? '240px' : '0', position: 'absolute', transition: 'right 0.3s ease-in-out' }}
+          style={{ right: isControlsOpen ? '200px' : '0', position: 'absolute', transition: 'right 0.3s ease-in-out' }}
         >
           {isControlsOpen ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
         </button>
@@ -713,7 +726,6 @@ export default function CodeGraph({
         // Physics
         d3AlphaDecay={0.001} 
         d3VelocityDecay={0.1} // Low friction for floaty movement
-        d3AlphaTarget={0.05} // Keep simulation alive and moving
         cooldownTicks={100} // Initial layout period
         
         // Rendering - Draw group circles BEFORE nodes so nodes are on top
