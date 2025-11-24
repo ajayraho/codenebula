@@ -79,7 +79,7 @@ export default function Home() {
         });
         
         setGraphData({ nodes, links: validLinks });
-        setStatus(`Done! ${nodes.length} nodes, ${validLinks.length} edges.`);
+        setStatus(`Done!`);
         setLoading(false);
       } catch (err) {
         console.error(err);
@@ -179,6 +179,9 @@ export default function Home() {
             <div className="flex gap-4">
               <span>Nodes: {graphData.nodes.length}</span>
               <span>Edges: {graphData.links.length}</span>
+            </div>
+            <div className="text-slate-600">
+              Made with <span className="text-red-500">♥</span> by Ajit
             </div>
             <div>
               {status}

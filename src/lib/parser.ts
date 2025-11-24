@@ -57,6 +57,32 @@ const PATTERNS: Record<string, RegExp[]> = {
     go: [
         /import\s+['"]([^'"]+)['"]/g,          // import "fmt"
         /import\s+\(\s*([\s\S]*?)\s*\)/g,      // import ( ... ) - requires secondary parsing, skipping for simplicity
+    ],
+    // Java
+    java: [
+        /import\s+([\w.]+);/g,                 // import java.util.List;
+        /import\s+static\s+([\w.]+);/g,        // import static java.util.Arrays.*;
+    ],
+    // C#
+    cs: [
+        /using\s+([\w.]+);/g,                  // using System.Collections;
+    ],
+    // C++
+    cpp: [
+        /#include\s+["<]([^\s">]+)[">]/g,     // #include "header.h" or #include <iostream>
+    ],
+    // Ruby
+    rb: [
+        /require\s+['"]([^'"]+)['"]/g,        // require 'module'
+        /require_relative\s+['"]([^'"]+)['"]/g, // require_relative './file'
+    ],
+    // PHP
+    php: [
+        /require\s+['"]([^'"]+)['"]/g,        // require 'file.php'
+        /require_once\s+['"]([^'"]+)['"]/g,   // require_once 'file.php'
+        /include\s+['"]([^'"]+)['"]/g,        // include 'file.php'
+        /include_once\s+['"]([^'"]+)['"]/g,   // include_once 'file.php'
+        /use\s+([\w\\]+);/g,                   // use App\Controller;
     ]
 }
 
@@ -72,6 +98,11 @@ const EXT_MAP: Record<string, string> = {
     'dart': 'dart',
     'rs': 'rs',
     'go': 'go',
+    'java': 'java',
+    'cs': 'cs',
+    'cpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp', 'c': 'cpp', 'h': 'cpp', 'hpp': 'cpp',
+    'rb': 'rb',
+    'php': 'php',
 }
 
 async function readFileContent(node: FileNode): Promise<string> {
@@ -89,7 +120,7 @@ async function readFileContent(node: FileNode): Promise<string> {
     return await file.text()
 }
 
-function resolveImportPath(currentPath: string, importPath: string, fileMap: Map<string, FileNode>): string | null {
+function resolveImportPath(currentPath: string, importPath: string, fileMap: Map<string, FileNode>, lang?: string): string | null {
     // 1. Handle relative paths (./, ../)
     if (importPath.startsWith(".")) {
         const currentDir = currentPath.split("/").slice(0, -1).join("/")
@@ -111,7 +142,7 @@ function resolveImportPath(currentPath: string, importPath: string, fileMap: Map
         if (fileMap.has(resolvedPath)) return resolvedPath
 
         // Try extensions
-        const extensions = [".ts", ".tsx", ".js", ".jsx", ".css", ".scss", ".py", ".dart"]
+        const extensions = [".ts", ".tsx", ".js", ".jsx", ".css", ".scss", ".py", ".dart", ".rs", ".go", ".java", ".cs", ".cpp", ".rb", ".php"]
         for (const ext of extensions) {
             if (fileMap.has(resolvedPath + ext)) return resolvedPath + ext
         }
@@ -119,6 +150,41 @@ function resolveImportPath(currentPath: string, importPath: string, fileMap: Map
         // Try index files
         for (const ext of extensions) {
             if (fileMap.has(resolvedPath + "/index" + ext)) return resolvedPath + "/index" + ext
+        }
+    } else {
+        // 2. Handle non-relative / package imports
+        const potentialSuffixes: string[] = []
+
+        if (lang === 'java') {
+            const basePath = importPath.replace(/\./g, "/")
+            potentialSuffixes.push(basePath + ".java")
+        } else if (lang === 'py') {
+            const basePath = importPath.replace(/\./g, "/")
+            potentialSuffixes.push(basePath + ".py")
+            potentialSuffixes.push(basePath + "/__init__.py")
+        } else {
+            // Default behavior for others
+            potentialSuffixes.push(importPath)
+            // Add common extensions if not present
+            if (!importPath.split("/").pop()?.includes(".")) {
+                const exts = [".js", ".ts", ".tsx", ".jsx", ".css", ".scss", ".h", ".hpp", ".cpp", ".cs"]
+                for (const ext of exts) {
+                    potentialSuffixes.push(importPath + ext)
+                }
+            }
+        }
+
+        for (const suffix of potentialSuffixes) {
+            for (const path of fileMap.keys()) {
+                // Check if path ends with suffix
+                // And ensure it's a full path segment match (preceded by / or start of string)
+                if (path.endsWith(suffix)) {
+                    const prefixIndex = path.length - suffix.length
+                    if (prefixIndex === 0 || path[prefixIndex - 1] === '/') {
+                        return path
+                    }
+                }
+            }
         }
     }
 
@@ -168,7 +234,7 @@ export async function parseFiles(files: FileNode[], onProgress?: (msg: string) =
                     const importPath = match[1]
                     if (!importPath) continue
 
-                    const resolved = resolveImportPath(node.path, importPath, fileMap)
+                    const resolved = resolveImportPath(node.path, importPath, fileMap, lang)
                     if (resolved) {
                         dependencies.push({
                             source: node.path,

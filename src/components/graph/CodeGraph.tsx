@@ -50,6 +50,11 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   const lastMouseMoveRef = useRef(0);
   const hoverGroupRef = useRef<string | null>(null);
   const focusedGroupRef = useRef<string | null>(null);
+  
+  // Folder drag state
+  const draggedFolderRef = useRef<string | null>(null);
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const folderOffsetsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   // Sync only focusedGroup (used for clicks)
   useEffect(() => {
@@ -181,90 +186,163 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     });
   };
 
-  // Handle background click to clear selection or detect double click on groups
+  // Handle background click to clear selection or detect folder label clicks
   const handleBackgroundClick = (event: MouseEvent) => {
-    const now = Date.now();
-    const isDoubleClick = (now - lastClickTimeRef.current) < 300;
-    lastClickTimeRef.current = now;
+    if (!graphRef.current || !containerRef.current) return;
+    
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    const coords = graphRef.current.screen2GraphCoords(x, y);
+    if (!coords) return;
 
-    if (isDoubleClick) {
-        // Handle Double Click Logic
-        if (!graphRef.current) return;
-        
-        // Convert to graph coordinates
-        // event is a native MouseEvent, so we need to calculate relative to canvas/container
-        // But react-force-graph might pass the event with different properties?
-        // Usually it passes the event object.
-        // Let's try to use the coordinates from the event if possible, or fallback to clientX/Y
-        
-        // We need to find the container bounds
-        // Since we don't have easy access to the canvas element directly here (it's inside the lib),
-        // we rely on containerRef.
-        if (!containerRef.current) return;
-        
-        const rect = containerRef.current.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        
-        const coords = graphRef.current.screen2GraphCoords(x, y);
-        if (!coords) return;
+    // Check if click is near any folder label (text area)
+    let clickedFolder: string | null = null;
+    
+    groups.forEach((nodes, groupName) => {
+      if (nodes.length === 0) return;
 
-        // Find deepest group containing the point
-        let deepestGroup: string | null = null;
-        let maxDepth = -1;
+      // Calculate bounding circle
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      nodes.forEach(n => {
+        if (n.x === undefined || n.y === undefined) return;
+        minX = Math.min(minX, n.x);
+        maxX = Math.max(maxX, n.x);
+        minY = Math.min(minY, n.y);
+        maxY = Math.max(maxY, n.y);
+      });
 
-        groups.forEach((nodes, groupName) => {
-            if (nodes.length === 0) return;
+      if (minX === Infinity) return;
 
-            // Calculate bounding circle
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-            nodes.forEach(n => {
-                if (n.x === undefined || n.y === undefined) return;
-                minX = Math.min(minX, n.x);
-                maxX = Math.max(maxX, n.x);
-                minY = Math.min(minY, n.y);
-                maxY = Math.max(maxY, n.y);
-            });
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const level = groupName.split('/').length;
+      const padding = spacing + (5 - Math.min(level, 5)) * 5;
+      const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
 
-            if (minX === Infinity) return;
+      // Check if click is in the label area (top of circle)
+      const labelY = centerY - radius;
+      const text = groupName.split('/').pop() || groupName;
+      
+      // Approximate label dimensions (rough estimate)
+      const labelHeight = 20; // Approximate text height in graph units
+      const labelWidth = text.length * 8; // Approximate width per character
+      
+      // Check if click is within label bounding box
+      if (coords.y >= labelY - labelHeight - 10 && coords.y <= labelY + 5 &&
+          coords.x >= centerX - labelWidth / 2 && coords.x <= centerX + labelWidth / 2) {
+        clickedFolder = groupName;
+      }
+    });
 
-            const centerX = (minX + maxX) / 2;
-            const centerY = (minY + maxY) / 2;
-            const level = groupName.split('/').length;
-            const padding = spacing + (5 - Math.min(level, 5)) * 5;
-            const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
-
-            // Check if point is inside circle
-            const dx = coords.x - centerX;
-            const dy = coords.y - centerY;
-            if (dx*dx + dy*dy <= radius*radius) {
-                if (level > maxDepth) {
-                    maxDepth = level;
-                    deepestGroup = groupName;
-                }
-            }
-        });
-
-        if (deepestGroup) {
-            if (focusedGroup === deepestGroup) {
-                setFocusedGroup(null);
-            } else {
-                setFocusedGroup(deepestGroup);
-            }
-            // Clear node highlights
-            setHighlightNodes(new Set());
-            setHighlightLinks(new Set());
-        }
-    } else {
-        // Single Click
-        setHighlightNodes(new Set());
-        setHighlightLinks(new Set());
+    if (clickedFolder) {
+      // Toggle folder focus
+      if (focusedGroup === clickedFolder) {
         setFocusedGroup(null);
+      } else {
+        setFocusedGroup(clickedFolder);
+      }
+      // Clear node highlights
+      setHighlightNodes(new Set());
+      setHighlightLinks(new Set());
+    } else {
+      // Clear everything on background click
+      setHighlightNodes(new Set());
+      setHighlightLinks(new Set());
+      setFocusedGroup(null);
     }
+  };
+
+  // Handle mouse up to end folder dragging
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (draggedFolderRef.current) {
+      e.stopPropagation();
+      draggedFolderRef.current = null;
+      dragStartPosRef.current = null;
+    }
+  };
+
+  // Handle mouse down to start folder dragging
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!graphRef.current || !containerRef.current) return;
+    
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const coords = graphRef.current.screen2GraphCoords(x, y);
+    if (!coords) return;
+
+    // Check if mouse down is on any folder label
+    groups.forEach((nodes, groupName) => {
+      if (nodes.length === 0) return;
+
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      nodes.forEach(n => {
+        if (n.x === undefined || n.y === undefined) return;
+        minX = Math.min(minX, n.x);
+        maxX = Math.max(maxX, n.x);
+        minY = Math.min(minY, n.y);
+        maxY = Math.max(maxY, n.y);
+      });
+
+      if (minX === Infinity) return;
+
+      let centerX = (minX + maxX) / 2;
+      let centerY = (minY + maxY) / 2;
+      
+      // Apply existing offset
+      const offset = folderOffsetsRef.current.get(groupName);
+      if (offset) {
+        centerX += offset.x;
+        centerY += offset.y;
+      }
+
+      const level = groupName.split('/').length;
+      const padding = spacing + (5 - Math.min(level, 5)) * 5;
+      const radius = Math.max(maxX - minX, maxY - minY) / 2 + padding;
+
+      const labelY = centerY - radius;
+      const text = groupName.split('/').pop() || groupName;
+      const labelHeight = 20;
+      const labelWidth = text.length * 8;
+      
+      if (coords.y >= labelY - labelHeight - 10 && coords.y <= labelY + 5 &&
+          coords.x >= centerX - labelWidth / 2 && coords.x <= centerX + labelWidth / 2) {
+        draggedFolderRef.current = groupName;
+        dragStartPosRef.current = coords;
+        e.preventDefault(); // Prevent default drag behavior
+        e.stopPropagation(); // Stop event from bubbling
+      }
+    });
   };
 
   // Handle mouse move to detect group hover
   const handleMouseMove = (e: React.MouseEvent) => {
+    // Handle folder dragging
+    if (draggedFolderRef.current && dragStartPosRef.current && graphRef.current && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      const coords = graphRef.current.screen2GraphCoords(x, y);
+      if (coords) {
+        const dx = coords.x - dragStartPosRef.current.x;
+        const dy = coords.y - dragStartPosRef.current.y;
+        
+        // Update folder offset
+        const currentOffset = folderOffsetsRef.current.get(draggedFolderRef.current) || { x: 0, y: 0 };
+        folderOffsetsRef.current.set(draggedFolderRef.current, {
+          x: currentOffset.x + dx,
+          y: currentOffset.y + dy
+        });
+        
+        dragStartPosRef.current = coords;
+      }
+      return;
+    }
+    
     // Throttle to prevent excessive re-renders
     const now = Date.now();
     if (now - lastMouseMoveRef.current < 100) return;
@@ -352,8 +430,15 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
 
       if (!hasValidNode) return;
 
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
+      let centerX = (minX + maxX) / 2;
+      let centerY = (minY + maxY) / 2;
+      
+      // Apply folder offset if dragged
+      const offset = folderOffsetsRef.current.get(groupName);
+      if (offset) {
+        centerX += offset.x;
+        centerY += offset.y;
+      }
       
       // Dynamic padding based on hierarchy level
       // Parents get MORE padding to ensure they enclose children
@@ -371,28 +456,24 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       const isFocused = groupName === currentFocusedGroup;
       const isRelatedToFocus = currentFocusedGroup ? (groupName.startsWith(currentFocusedGroup) || currentFocusedGroup.startsWith(groupName)) : true;
       
+      // Only draw stroke, no fill - this prevents blocking node clicks
       if (currentFocusedGroup && !isRelatedToFocus) {
           // Dimmed
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.005)'; 
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
           ctx.lineWidth = 1;
       } else if (isFocused) {
           // Focused style
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; 
-          ctx.strokeStyle = 'rgba(100, 149, 237, 0.5)'; // Blueish border
+          ctx.strokeStyle = 'rgba(100, 149, 237, 0.6)'; // Blueish border
           ctx.lineWidth = 3;
       } else if (isHovered) {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'; // Lighter background
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; // Lighter border
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Lighter border
           ctx.lineWidth = 2;
       } else {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.03)'; // Subtle background
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
           ctx.lineWidth = 1;
       }
       
-      ctx.fill();
-      ctx.stroke();
+      ctx.stroke(); // Only stroke, no fill!
       
       // Draw group label - always visible with adaptive sizing
       // Calculate font size to be constant in screen space
@@ -498,7 +579,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         </div>
       </div>
 
-      <div onMouseMove={handleMouseMove} className="w-full h-full">
+      <div onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} className="w-full h-full">
       <ForceGraph2DNoSSR
         ref={graphRef}
         width={dimensions.width}
