@@ -62,6 +62,10 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   // Reset zoom flag when data changes (new file loaded)
   useEffect(() => {
       hasZoomedRef.current = false;
+      // Reset sliders to default values
+      setChargeMultiplier(1.0);
+      setLinkMultiplier(1.0);
+      setClusterMultiplier(1.0);
   }, [data]);
 
   // Group nodes by directory hierarchy
@@ -139,14 +143,8 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       });
     });
 
-    // Reheat simulation to apply changes
-    const simulation = fg.d3Force('simulation');
-    if (simulation) {
-      simulation.alpha(0.3).restart();
-      setTimeout(() => {
-        simulation.alphaTarget(0);
-      }, 300);
-    }
+    // Reheat simulation to apply changes when sliders move
+    fg.d3ReheatSimulation();
   }, [groups, chargeMultiplier, linkMultiplier, clusterMultiplier]);
 
   // Handle node click for highlighting
@@ -564,7 +562,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
         d3VelocityDecay={0.3} // Less drag
         cooldownTicks={300} // More time to settle
         
-        // Rendering
+        // Rendering - Draw group circles BEFORE nodes so nodes are on top
         onRenderFramePre={(ctx, globalScale) => drawGroupCircles(ctx, globalScale)}
         nodeCanvasObject={(node: any, ctx, globalScale) => {
             const label = node.name;
@@ -605,9 +603,11 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             }
         }}
         nodePointerAreaPaint={(node: any, color, ctx) => {
+            // Larger clickable area to make nodes easier to click
             ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(node.x, node.y, (node.val || 4) + 2, 0, 2 * Math.PI, false);
+            const clickRadius = Math.max((node.val || 4) * 2, 12); // Much larger click area
+            ctx.arc(node.x, node.y, clickRadius, 0, 2 * Math.PI, false);
             ctx.fill();
         }}
       />
