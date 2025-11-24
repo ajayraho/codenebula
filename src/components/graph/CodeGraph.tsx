@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import * as d3 from "d3";
+import { ChevronRight, ChevronLeft } from "lucide-react";
 
 // Dynamic import to avoid SSR issues with canvas
 const ForceGraph2DNoSSR = dynamic(
@@ -50,6 +51,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   const lastMouseMoveRef = useRef(0);
   const hoverGroupRef = useRef<string | null>(null);
   const focusedGroupRef = useRef<string | null>(null);
+  const [isControlsOpen, setIsControlsOpen] = useState(true);
   
   // Folder drag state
   const draggedFolderRef = useRef<string | null>(null);
@@ -527,7 +529,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   return (
     <div ref={containerRef} className="w-full h-full bg-slate-950 relative">
       {/* Controls Overlay */}
-      <div className="absolute bottom-15 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm">
+      <div className={`absolute bottom-15 right-4 z-10 flex flex-col gap-4 bg-slate-900/80 p-4 rounded-lg border border-slate-700 backdrop-blur-sm transition-all duration-300 ease-in-out ${isControlsOpen ? 'translate-x-0 opacity-100' : 'translate-x-[120%] opacity-0 pointer-events-none'}`}>
         <button 
             onClick={() => {
                 if (graphRef.current) {
@@ -577,6 +579,17 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             className="w-full"
           />
         </div>
+      </div>
+
+      {/* Controls Toggle Button */}
+      <div className="absolute bottom-15 right-0 z-20 transform -translate-y-1/2">
+        <button 
+          onClick={() => setIsControlsOpen(!isControlsOpen)}
+          className="p-1 bg-slate-900/80 border-l border-t border-b border-slate-700 rounded-l-md text-slate-400 hover:text-slate-200 backdrop-blur-sm transition-colors"
+          style={{ right: isControlsOpen ? '240px' : '0', position: 'absolute', transition: 'right 0.3s ease-in-out' }}
+        >
+          {isControlsOpen ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+        </button>
       </div>
 
       <div onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} className="w-full h-full">
