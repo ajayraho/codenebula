@@ -39,7 +39,10 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
-  const spacing = 20;
+  const [chargeMultiplier, setChargeMultiplier] = useState(1.0);
+  const [linkMultiplier, setLinkMultiplier] = useState(1.0);
+  const [clusterMultiplier, setClusterMultiplier] = useState(1.0);
+  const spacing = 100;
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
   const lastClickTimeRef = useRef(0);
@@ -103,11 +106,11 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
     const fg = graphRef.current;
     const nodeCount = finalData.nodes.length;
     
-    // Simple scaling
+    // Simple scaling with user controls
     const scaleFactor = Math.max(0.3, 1 - Math.log10(nodeCount / 200) * 0.4);
-    const chargeStrength = -250 * scaleFactor; // Stronger repulsion
-    const linkDistance = 100 * scaleFactor; // Longer links
-    const collisionBuffer = Math.max(8, 15 * scaleFactor); // More space between nodes
+    const chargeStrength = -500 * scaleFactor * chargeMultiplier; // User controlled - increased repulsion
+    const linkDistance = 150 * scaleFactor * linkMultiplier; // User controlled - increased distance
+    const collisionBuffer = Math.max(12, 20 * scaleFactor); // Increased collision buffer
     
     fg.d3Force('collide', d3.forceCollide((node: any) => (node.val || 4) + collisionBuffer).strength(1).iterations(5));
     fg.d3Force('charge').strength(chargeStrength).distanceMax(600);
@@ -126,7 +129,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
           });
           if (count === 0) return;
           cx /= count; cy /= count;
-          const strength = 0.15 * scaleFactor;
+          const strength = 0.15 * scaleFactor * clusterMultiplier; // User controlled
           nodes.forEach(n => {
               if (n.x !== undefined && n.y !== undefined) {
                   n.vx! += (cx - n.x) * strength * alpha;
@@ -135,7 +138,16 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
           });
       });
     });
-  }, [groups]);
+
+    // Reheat simulation to apply changes
+    const simulation = fg.d3Force('simulation');
+    if (simulation) {
+      simulation.alpha(0.3).restart();
+      setTimeout(() => {
+        simulation.alphaTarget(0);
+      }, 300);
+    }
+  }, [groups, chargeMultiplier, linkMultiplier, clusterMultiplier]);
 
   // Handle node click for highlighting
   const handleNodeClick = (node: any) => {
@@ -448,7 +460,44 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             Zoom to Fit
         </button>
         
-       
+        <div className="flex flex-col gap-2">
+          <label className="text-white text-xs font-medium">Spread: {chargeMultiplier.toFixed(1)}x</label>
+          <input 
+            type="range" 
+            min="0.5" 
+            max="3" 
+            step="0.1"
+            value={chargeMultiplier} 
+            onChange={(e) => setChargeMultiplier(Number(e.target.value))}
+            className="w-full"
+          />
+        </div>
+        
+        <div className="flex flex-col gap-2">
+          <label className="text-white text-xs font-medium">Link Distance: {linkMultiplier.toFixed(1)}x</label>
+          <input 
+            type="range" 
+            min="0.5" 
+            max="2" 
+            step="0.1"
+            value={linkMultiplier} 
+            onChange={(e) => setLinkMultiplier(Number(e.target.value))}
+            className="w-full"
+          />
+        </div>
+        
+        <div className="flex flex-col gap-2">
+          <label className="text-white text-xs font-medium">Folder Grouping: {clusterMultiplier.toFixed(1)}x</label>
+          <input 
+            type="range" 
+            min="0" 
+            max="2" 
+            step="0.1"
+            value={clusterMultiplier} 
+            onChange={(e) => setClusterMultiplier(Number(e.target.value))}
+            className="w-full"
+          />
+        </div>
       </div>
 
       <div onMouseMove={handleMouseMove} className="w-full h-full">
