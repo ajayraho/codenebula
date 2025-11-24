@@ -218,7 +218,7 @@ export default function Home() {
 
     setGraphData({ nodes: finalNodes, links: filteredLinks });
 
-  }, [initialGraphData, filters]);
+  }, [initialGraphData, filters.search, filters.folders, filters.extensions, filters.showHidden, filters.showIsolated]);
 
   const processGraph = async (tree: any[]) => {
     setStatus(`Found ${tree.length} files. Building structure...`);

@@ -660,9 +660,10 @@ export default function CodeGraph({
         linkDirectionalParticleSpeed={0.005}
 
         // Physics
-        d3AlphaDecay={0.015} // Slower decay for better spreading
-        d3VelocityDecay={0.3} // Less drag
-        cooldownTicks={300} // More time to settle
+        d3AlphaDecay={0.001} 
+        d3VelocityDecay={0.08} // Very low friction for floaty movement
+        d3AlphaTarget={0.01} // Keep simulation alive
+        cooldownTicks={100} // Initial layout period
         
         // Rendering - Draw group circles BEFORE nodes so nodes are on top
         onRenderFramePre={(ctx, globalScale) => drawGroupCircles(ctx, globalScale)}
