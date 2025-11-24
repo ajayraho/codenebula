@@ -64,6 +64,8 @@ export default function Home() {
     extensions: new Set<string>(),
     showHidden: false,
     showIsolated: true,
+    hideFolderNames: false,
+    hideFileNames: false,
   });
 
   // Derived lists for filter UI
@@ -402,7 +404,11 @@ export default function Home() {
 
       {/* Graph Background */}
       <div className="absolute inset-0 z-0">
-        <CodeGraph data={graphData} />
+        <CodeGraph 
+          data={graphData} 
+          hideFolderNames={filters.hideFolderNames}
+          hideFileNames={filters.hideFileNames}
+        />
       </div>
 
       {/* Overlay UI */}
@@ -495,6 +501,24 @@ export default function Home() {
                         className="rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
                       />
                       <span>Show Isolated Nodes</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-300 hover:text-white cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={filters.hideFolderNames}
+                        onChange={() => setFilters(prev => ({ ...prev, hideFolderNames: !prev.hideFolderNames }))}
+                        className="rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
+                      />
+                      <span>Hide Folder Names</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-300 hover:text-white cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={filters.hideFileNames}
+                        onChange={() => setFilters(prev => ({ ...prev, hideFileNames: !prev.hideFileNames }))}
+                        className="rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
+                      />
+                      <span>Hide File Names</span>
                     </label>
                   </div>
                 </div>

@@ -33,7 +33,15 @@ interface GraphData {
   links: GraphLink[];
 }
 
-export default function CodeGraph({ data }: { data?: GraphData }) {
+export default function CodeGraph({ 
+  data, 
+  hideFolderNames = false, 
+  hideFileNames = false 
+}: { 
+  data?: GraphData;
+  hideFolderNames?: boolean;
+  hideFileNames?: boolean;
+}) {
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
@@ -483,7 +491,7 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
       const fontSize = baseFontSize / globalScale;
       const minRadius = 40 / globalScale; // Minimum circle size to show label
       
-      if (radius > minRadius) {
+      if (radius > minRadius && !hideFolderNames) {
           const isHovered = groupName === currentHoverGroup;
           const isFocused = groupName === currentFocusedGroup;
           const isRelatedToFocus = currentFocusedGroup ? (groupName.startsWith(currentFocusedGroup) || currentFocusedGroup.startsWith(groupName)) : true;
@@ -676,15 +684,21 @@ export default function CodeGraph({ data }: { data?: GraphData }) {
             
             if (isDimmed) {
                 ctx.fillStyle = 'rgba(100, 100, 100, 0.1)'; // Dimmed color
+                ctx.shadowBlur = 0;
             } else {
                 ctx.fillStyle = node.color || 'rgba(255, 255, 255, 0.8)';
+                ctx.shadowColor = node.color || 'rgba(255, 255, 255, 0.8)';
+                ctx.shadowBlur = 15;
             }
             ctx.fill();
+            
+            // Reset shadow
+            ctx.shadowBlur = 0;
             
             // Draw Label (Outside)
             // Show label if zoomed in OR if highlighted
             // Hide if dimmed due to focus
-            if ((globalScale > 0.8 || isHighlighted) && !isDimmed) { 
+            if ((globalScale > 0.8 || isHighlighted) && !isDimmed && !hideFileNames) { 
                 ctx.font = `${fontSize}px Sans-Serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
