@@ -83,6 +83,31 @@ const PATTERNS: Record<string, RegExp[]> = {
         /include\s+['"]([^'"]+)['"]/g,        // include 'file.php'
         /include_once\s+['"]([^'"]+)['"]/g,   // include_once 'file.php'
         /use\s+([\w\\]+);/g,                   // use App\Controller;
+    ],
+    // ISML (Internet Store Markup Language - Salesforce Commerce Cloud)
+    isml: [
+        /<isinclude\s+template\s*=\s*['"]([^'"]+)['"]/gi,  // <isinclude template="path/to/template" />
+        /<ismodule\s+template\s*=\s*['"]([^'"]+)['"]/gi,   // <ismodule template="path/to/module" />
+        /<isdecorate\s+template\s*=\s*['"]([^'"]+)['"]/gi, // <isdecorate template="decorator" />
+        /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g,            // require('module') - for ISML script blocks
+        /\$\{Resource\.msg\(['"]([^'"]+)['"]/g,             // ${Resource.msg('key', 'file')} - resource includes
+    ],
+    // JSP (JavaServer Pages)
+    jsp: [
+        /<%@\s*include\s+file\s*=\s*['"]([^'"]+)['"]/gi,   // <%@ include file="header.jsp" %>
+        /<%@\s*page\s+import\s*=\s*['"]([^'"]+)['"]/gi,    // <%@ page import="java.util.*" %>
+        /<%@\s*taglib\s+uri\s*=\s*['"]([^'"]+)['"]/gi,     // <%@ taglib uri="/tags/custom" prefix="c" %>
+        /<jsp:include\s+page\s*=\s*['"]([^'"]+)['"]/gi,    // <jsp:include page="fragment.jsp" />
+        /<jsp:forward\s+page\s*=\s*['"]([^'"]+)['"]/gi,    // <jsp:forward page="target.jsp" />
+        /<c:import\s+url\s*=\s*['"]([^'"]+)['"]/gi,        // <c:import url="/includes/nav.jsp" />
+        /import\s+([\w.]+);/g,                              // Java import statements in scriptlets
+    ],
+    // ASP (Active Server Pages - Classic ASP)
+    asp: [
+        /<!--\s*#include\s+(file|virtual)\s*=\s*['"]([^'"]+)['"]\s*-->/gi,  // <!--#include file="header.asp" -->
+        /Server\.Execute\s*\(\s*['"]([^'"]+)['"]/gi,        // Server.Execute("path.asp")
+        /Server\.Transfer\s*\(\s*['"]([^'"]+)['"]/gi,       // Server.Transfer("page.asp")
+        /Response\.Redirect\s*\(\s*['"]([^'"]+)['"]/gi,     // Response.Redirect("newpage.asp")
     ]
 }
 
@@ -103,6 +128,9 @@ const EXT_MAP: Record<string, string> = {
     'cpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp', 'c': 'cpp', 'h': 'cpp', 'hpp': 'cpp',
     'rb': 'rb',
     'php': 'php',
+    'isml': 'isml',
+    'jsp': 'jsp', 'jspx': 'jsp', 'jspf': 'jsp',
+    'asp': 'asp', 'aspx': 'asp', 'asa': 'asp',
 }
 
 async function readFileContent(node: FileNode): Promise<string> {
@@ -142,7 +170,7 @@ function resolveImportPath(currentPath: string, importPath: string, fileMap: Map
         if (fileMap.has(resolvedPath)) return resolvedPath
 
         // Try extensions
-        const extensions = [".ts", ".tsx", ".js", ".jsx", ".css", ".scss", ".py", ".dart", ".rs", ".go", ".java", ".cs", ".cpp", ".rb", ".php"]
+        const extensions = [".ts", ".tsx", ".js", ".jsx", ".css", ".scss", ".py", ".dart", ".rs", ".go", ".java", ".cs", ".cpp", ".rb", ".php", ".isml", ".jsp", ".jspx", ".asp", ".aspx"]
         for (const ext of extensions) {
             if (fileMap.has(resolvedPath + ext)) return resolvedPath + ext
         }
@@ -231,7 +259,8 @@ export async function parseFiles(files: FileNode[], onProgress?: (msg: string) =
                 pattern.lastIndex = 0
                 let match
                 while ((match = pattern.exec(content)) !== null) {
-                    const importPath = match[1]
+                    // For ASP includes, capture group 2 has the path, otherwise use group 1
+                    const importPath = match[2] || match[1]
                     if (!importPath) continue
 
                     const resolved = resolveImportPath(node.path, importPath, fileMap, lang)
